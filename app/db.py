@@ -44,6 +44,13 @@ class Database:
                     created_at text not null,
                     checked_at text
                 );
+
+                create table if not exists user_states (
+                    telegram_id integer primary key,
+                    state text not null,
+                    data text not null default '{}',
+                    updated_at text not null
+                );
                 """
             )
 
@@ -145,3 +152,29 @@ class Database:
                 """,
                 (limit,),
             ).fetchall()
+
+    def set_state(self, telegram_id: int, state: str, data: str = "{}") -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                insert into user_states (telegram_id, state, data, updated_at)
+                values (?, ?, ?, ?)
+                on conflict(telegram_id) do update set
+                    state = excluded.state,
+                    data = excluded.data,
+                    updated_at = excluded.updated_at
+                """,
+                (telegram_id, state, data, now),
+            )
+
+    def get_state(self, telegram_id: int) -> sqlite3.Row | None:
+        with self.connect() as conn:
+            return conn.execute(
+                "select state, data from user_states where telegram_id = ?",
+                (telegram_id,),
+            ).fetchone()
+
+    def clear_state(self, telegram_id: int) -> None:
+        with self.connect() as conn:
+            conn.execute("delete from user_states where telegram_id = ?", (telegram_id,))

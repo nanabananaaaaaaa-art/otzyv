@@ -1,8 +1,6 @@
 import os
 from dataclasses import dataclass
 
-from dotenv import load_dotenv
-
 
 @dataclass(frozen=True)
 class Config:
@@ -13,7 +11,7 @@ class Config:
 
 
 def load_config() -> Config:
-    load_dotenv()
+    load_dotenv_file()
 
     token = os.getenv("BOT_TOKEN", "").strip()
     if not token:
@@ -32,3 +30,15 @@ def load_config() -> Config:
         default_review_price=int(os.getenv("DEFAULT_REVIEW_PRICE", "100")),
         database_path=os.getenv("DATABASE_PATH", "bot.sqlite3"),
     )
+
+
+def load_dotenv_file(path: str = ".env") -> None:
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
