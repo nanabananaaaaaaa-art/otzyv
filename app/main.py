@@ -1,5 +1,5 @@
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -63,7 +63,7 @@ def is_admin(message: Message) -> bool:
     return bool(message.from_user and message.from_user.id in config.admin_ids)
 
 
-@router.message(Command("start"))
+@router.message(StateFilter("*"), Command("start"))
 async def start(message: Message, state: FSMContext) -> None:
     await state.clear()
     manager = db.get_manager(message.from_user.id)
@@ -79,8 +79,8 @@ async def start(message: Message, state: FSMContext) -> None:
     await message.answer("Выбери город, к которому тебя привязать:", reply_markup=keyboard(CITIES))
 
 
-@router.message(Command("city"))
-@router.message(F.text == MENU_CITY)
+@router.message(StateFilter("*"), Command("city"))
+@router.message(StateFilter("*"), F.text == MENU_CITY)
 async def change_city(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(Register.city)
@@ -103,8 +103,8 @@ async def register_manager_city(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(Command("add"))
-@router.message(F.text == MENU_ADD)
+@router.message(StateFilter("*"), Command("add"))
+@router.message(StateFilter("*"), F.text == MENU_ADD)
 async def add_review(message: Message, state: FSMContext) -> None:
     await state.clear()
     manager = db.get_manager(message.from_user.id)
@@ -182,8 +182,8 @@ async def save_review(message: Message, state: FSMContext, bot: Bot) -> None:
             await bot.send_message(admin_id, admin_text)
 
 
-@router.message(Command("kpi"))
-@router.message(F.text == MENU_KPI)
+@router.message(StateFilter("*"), Command("kpi"))
+@router.message(StateFilter("*"), F.text == MENU_KPI)
 async def kpi(message: Message) -> None:
     rows = db.get_stats(message.from_user.id)
     if not rows:
@@ -201,8 +201,8 @@ async def kpi(message: Message) -> None:
     )
 
 
-@router.message(Command("pending"))
-@router.message(F.text == "🕓 На проверке")
+@router.message(StateFilter("*"), Command("pending"))
+@router.message(StateFilter("*"), F.text == "🕓 На проверке")
 async def pending(message: Message) -> None:
     if not is_admin(message):
         await message.answer("Команда доступна только администратору.")
@@ -222,8 +222,8 @@ async def pending(message: Message) -> None:
     await message.answer(text)
 
 
-@router.message(Command("report"))
-@router.message(F.text == "📋 Отчет")
+@router.message(StateFilter("*"), Command("report"))
+@router.message(StateFilter("*"), F.text == "📋 Отчет")
 async def report(message: Message) -> None:
     if not is_admin(message):
         await message.answer("Команда доступна только администратору.")
@@ -244,7 +244,7 @@ async def report(message: Message) -> None:
     await message.answer(text)
 
 
-@router.message(F.text.regexp(r"^/approve_\d+$"))
+@router.message(StateFilter("*"), F.text.regexp(r"^/approve_\d+$"))
 async def approve(message: Message) -> None:
     if not is_admin(message):
         await message.answer("Команда доступна только администратору.")
@@ -257,7 +257,7 @@ async def approve(message: Message) -> None:
         await message.answer(f"Отзыв #{review_id} не найден.")
 
 
-@router.message(F.text.regexp(r"^/reject_\d+$"))
+@router.message(StateFilter("*"), F.text.regexp(r"^/reject_\d+$"))
 async def reject(message: Message) -> None:
     if not is_admin(message):
         await message.answer("Команда доступна только администратору.")
@@ -270,7 +270,7 @@ async def reject(message: Message) -> None:
         await message.answer(f"Отзыв #{review_id} не найден.")
 
 
-@router.message(F.text == MENU_HELP)
+@router.message(StateFilter("*"), F.text == MENU_HELP)
 async def help_menu(message: Message) -> None:
     await show_main_menu(
         message,
