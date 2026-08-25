@@ -27,6 +27,10 @@ router = Router()
 
 CITIES = ["Москва", "Санкт-Петербург", "Псков", "Великий Новгород", "Другой"]
 PLATFORMS = ["Яндекс", "2ГИС", "Google", "Avito", "Другое"]
+MENU_ADD = "📝 Отправить отзыв"
+MENU_KPI = "📊 Мой KPI"
+MENU_CITY = "🏙 Сменить город"
+MENU_HELP = "❔ Помощь"
 
 
 def keyboard(items: list[str]) -> ReplyKeyboardMarkup:
@@ -34,6 +38,24 @@ def keyboard(items: list[str]) -> ReplyKeyboardMarkup:
         keyboard=[[KeyboardButton(text=item)] for item in items],
         resize_keyboard=True,
         one_time_keyboard=True,
+    )
+
+
+def main_menu(is_admin_user: bool = False) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton(text=MENU_ADD), KeyboardButton(text=MENU_KPI)],
+        [KeyboardButton(text=MENU_CITY), KeyboardButton(text=MENU_HELP)],
+    ]
+    if is_admin_user:
+        rows.append([KeyboardButton(text="🕓 На проверке"), KeyboardButton(text="📋 Отчет")])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
+
+
+async def show_main_menu(message: Message, text: str | None = None) -> None:
+    await message.answer(
+        text
+        or "Готово. Выбери действие кнопкой ниже.",
+        reply_markup=main_menu(is_admin(message)),
     )
 
 
@@ -45,12 +67,10 @@ def is_admin(message: Message) -> bool:
 async def start(message: Message, state: FSMContext) -> None:
     manager = db.get_manager(message.from_user.id)
     if manager:
-        await message.answer(
+        await show_main_menu(
+            message,
             f"Ты уже привязан к городу: {manager.city}\n\n"
-            "Команды:\n"
-            "/add - отправить отзыв\n"
-            "/kpi - мой KPI и заработок\n"
-            "/city - сменить город"
+            "Дальше просто нажимай кнопки внизу."
         )
         return
 
@@ -59,6 +79,7 @@ async def start(message: Message, state: FSMContext) -> None:
 
 
 @router.message(Command("city"))
+@router.message(F.text == MENU_CITY)
 async def change_city(message: Message, state: FSMContext) -> None:
     await state.set_state(Register.city)
     await message.answer("Выбери город:", reply_markup=keyboard(CITIES))
@@ -73,13 +94,15 @@ async def register_manager_city(message: Message, state: FSMContext) -> None:
     name = message.from_user.full_name if message.from_user else "Без имени"
     db.upsert_manager(message.from_user.id, name, message.text.strip())
     await state.clear()
-    await message.answer(
+    await show_main_menu(
+        message,
         "Город сохранен.\n\n"
-        "Теперь можно отправлять отзывы через /add, а KPI смотреть через /kpi."
+        "Теперь можно отправлять отзывы и смотреть KPI кнопками внизу."
     )
 
 
 @router.message(Command("add"))
+@router.message(F.text == MENU_ADD)
 async def add_review(message: Message, state: FSMContext) -> None:
     manager = db.get_manager(message.from_user.id)
     if not manager:
@@ -134,7 +157,8 @@ async def save_review(message: Message, state: FSMContext, bot: Bot) -> None:
 
     await message.answer(
         f"Отзыв #{review_id} принят на проверку.\n"
-        f"Сумма после подтверждения: {config.default_review_price} руб."
+        f"Сумма после подтверждения: {config.default_review_price} руб.",
+        reply_markup=main_menu(is_admin(message)),
     )
 
     admin_text = (
@@ -155,6 +179,7 @@ async def save_review(message: Message, state: FSMContext, bot: Bot) -> None:
 
 
 @router.message(Command("kpi"))
+@router.message(F.text == MENU_KPI)
 async def kpi(message: Message) -> None:
     rows = db.get_stats(message.from_user.id)
     if not rows:
@@ -173,6 +198,7 @@ async def kpi(message: Message) -> None:
 
 
 @router.message(Command("pending"))
+@router.message(F.text == "🕓 На проверке")
 async def pending(message: Message) -> None:
     if not is_admin(message):
         await message.answer("Команда доступна только администратору.")
@@ -193,6 +219,7 @@ async def pending(message: Message) -> None:
 
 
 @router.message(Command("report"))
+@router.message(F.text == "📋 Отчет")
 async def report(message: Message) -> None:
     if not is_admin(message):
         await message.answer("Команда доступна только администратору.")
@@ -239,13 +266,26 @@ async def reject(message: Message) -> None:
         await message.answer(f"Отзыв #{review_id} не найден.")
 
 
+@router.message(F.text == MENU_HELP)
+async def help_menu(message: Message) -> None:
+    await show_main_menu(
+        message,
+        "Что можно делать:\n\n"
+        "📝 Отправить отзыв - пройти заявку по шагам\n"
+        "📊 Мой KPI - посмотреть подтвержденные отзывы и заработок\n"
+        "🏙 Сменить город - заново выбрать город\n\n"
+        "Писать команды вручную больше не нужно."
+    )
+
+
 @router.message(F.text.in_(CITIES))
 async def save_city_without_state(message: Message, state: FSMContext) -> None:
     manager = db.get_manager(message.from_user.id)
     if manager:
-        await message.answer(
+        await show_main_menu(
+            message,
             f"Ты уже привязан к городу: {manager.city}.\n"
-            "Чтобы сменить город, нажми /city."
+            f"Чтобы сменить город, нажми «{MENU_CITY}»."
         )
         return
 
@@ -256,7 +296,7 @@ async def save_city_without_state(message: Message, state: FSMContext) -> None:
 async def fallback(message: Message) -> None:
     manager = db.get_manager(message.from_user.id)
     if manager:
-        await message.answer("Не понял команду. Используй /add для отзыва или /kpi для KPI.")
+        await show_main_menu(message, "Не понял сообщение. Выбери действие кнопкой ниже.")
     else:
         await message.answer("Сначала выбери город через /start.")
 
