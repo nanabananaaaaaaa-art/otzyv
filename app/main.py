@@ -3,7 +3,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, ReplyKeyboardRemove
 
 from app.config import load_config
 from app.db import Database
@@ -65,6 +65,7 @@ def is_admin(message: Message) -> bool:
 
 @router.message(Command("start"))
 async def start(message: Message, state: FSMContext) -> None:
+    await state.clear()
     manager = db.get_manager(message.from_user.id)
     if manager:
         await show_main_menu(
@@ -81,6 +82,7 @@ async def start(message: Message, state: FSMContext) -> None:
 @router.message(Command("city"))
 @router.message(F.text == MENU_CITY)
 async def change_city(message: Message, state: FSMContext) -> None:
+    await state.clear()
     await state.set_state(Register.city)
     await message.answer("Выбери город:", reply_markup=keyboard(CITIES))
 
@@ -104,6 +106,7 @@ async def register_manager_city(message: Message, state: FSMContext) -> None:
 @router.message(Command("add"))
 @router.message(F.text == MENU_ADD)
 async def add_review(message: Message, state: FSMContext) -> None:
+    await state.clear()
     manager = db.get_manager(message.from_user.id)
     if not manager:
         await state.set_state(Register.city)
@@ -136,7 +139,8 @@ async def save_client_name(message: Message, state: FSMContext) -> None:
     await state.set_state(AddReview.proof)
     await message.answer(
         "Теперь отправь доказательство: фото/скрин отзыва или текст/ссылку. "
-        "Можно фото с подписью."
+        "Можно фото с подписью.",
+        reply_markup=ReplyKeyboardRemove(),
     )
 
 
