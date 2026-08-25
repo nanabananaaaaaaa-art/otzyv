@@ -88,7 +88,7 @@ python -m app.main
    - `BOT_TOKEN`
    - `ADMIN_IDS`
    - `DEFAULT_REVIEW_PRICE`
-   - `DATABASE_PATH=bot.sqlite3`
+   - `DATABASE_PATH=/data/bot.sqlite3`
 4. Запускаешь приложение.
 
 Если Amvera попросит команду запуска, укажи:
@@ -201,7 +201,7 @@ git push -u origin main
 BOT_TOKEN=токен_от_BotFather
 ADMIN_IDS=твой_telegram_id
 DEFAULT_REVIEW_PRICE=100
-DATABASE_PATH=bot.sqlite3
+DATABASE_PATH=/data/bot.sqlite3
 ```
 
 Если админов несколько:
