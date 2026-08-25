@@ -66,6 +66,10 @@ async def change_city(message: Message, state: FSMContext) -> None:
 
 @router.message(Register.city)
 async def save_city(message: Message, state: FSMContext) -> None:
+    await register_manager_city(message, state)
+
+
+async def register_manager_city(message: Message, state: FSMContext) -> None:
     name = message.from_user.full_name if message.from_user else "Без имени"
     db.upsert_manager(message.from_user.id, name, message.text.strip())
     await state.clear()
@@ -233,6 +237,28 @@ async def reject(message: Message) -> None:
         await message.answer(f"Отзыв #{review_id} отклонен.")
     else:
         await message.answer(f"Отзыв #{review_id} не найден.")
+
+
+@router.message(F.text.in_(CITIES))
+async def save_city_without_state(message: Message, state: FSMContext) -> None:
+    manager = db.get_manager(message.from_user.id)
+    if manager:
+        await message.answer(
+            f"Ты уже привязан к городу: {manager.city}.\n"
+            "Чтобы сменить город, нажми /city."
+        )
+        return
+
+    await register_manager_city(message, state)
+
+
+@router.message()
+async def fallback(message: Message) -> None:
+    manager = db.get_manager(message.from_user.id)
+    if manager:
+        await message.answer("Не понял команду. Используй /add для отзыва или /kpi для KPI.")
+    else:
+        await message.answer("Сначала выбери город через /start.")
 
 
 async def main() -> None:
