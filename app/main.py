@@ -1,0 +1,249 @@
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup
+
+from app.config import load_config
+from app.db import Database
+
+
+class Register(StatesGroup):
+    city = State()
+
+
+class AddReview(StatesGroup):
+    platform = State()
+    client_name = State()
+    office = State()
+    proof = State()
+
+
+config = load_config()
+db = Database(config.database_path)
+router = Router()
+
+
+CITIES = ["Москва", "Санкт-Петербург", "Псков", "Великий Новгород", "Другой"]
+PLATFORMS = ["Яндекс", "2ГИС", "Google", "Avito", "Другое"]
+
+
+def keyboard(items: list[str]) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=item)] for item in items],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+    )
+
+
+def is_admin(message: Message) -> bool:
+    return bool(message.from_user and message.from_user.id in config.admin_ids)
+
+
+@router.message(Command("start"))
+async def start(message: Message, state: FSMContext) -> None:
+    manager = db.get_manager(message.from_user.id)
+    if manager:
+        await message.answer(
+            f"Ты уже привязан к городу: {manager.city}\n\n"
+            "Команды:\n"
+            "/add - отправить отзыв\n"
+            "/kpi - мой KPI и заработок\n"
+            "/city - сменить город"
+        )
+        return
+
+    await state.set_state(Register.city)
+    await message.answer("Выбери город, к которому тебя привязать:", reply_markup=keyboard(CITIES))
+
+
+@router.message(Command("city"))
+async def change_city(message: Message, state: FSMContext) -> None:
+    await state.set_state(Register.city)
+    await message.answer("Выбери город:", reply_markup=keyboard(CITIES))
+
+
+@router.message(Register.city)
+async def save_city(message: Message, state: FSMContext) -> None:
+    name = message.from_user.full_name if message.from_user else "Без имени"
+    db.upsert_manager(message.from_user.id, name, message.text.strip())
+    await state.clear()
+    await message.answer(
+        "Город сохранен.\n\n"
+        "Теперь можно отправлять отзывы через /add, а KPI смотреть через /kpi."
+    )
+
+
+@router.message(Command("add"))
+async def add_review(message: Message, state: FSMContext) -> None:
+    manager = db.get_manager(message.from_user.id)
+    if not manager:
+        await state.set_state(Register.city)
+        await message.answer("Сначала выбери город:", reply_markup=keyboard(CITIES))
+        return
+
+    await state.set_state(AddReview.office)
+    await message.answer(
+        "Напиши точку/офис, как сейчас пишете в группе. Например: СЦ Авиамоторная"
+    )
+
+
+@router.message(AddReview.office)
+async def save_office(message: Message, state: FSMContext) -> None:
+    await state.update_data(office=message.text.strip())
+    await state.set_state(AddReview.platform)
+    await message.answer("Где опубликован/будет опубликован отзыв?", reply_markup=keyboard(PLATFORMS))
+
+
+@router.message(AddReview.platform)
+async def save_platform(message: Message, state: FSMContext) -> None:
+    await state.update_data(platform=message.text.strip())
+    await state.set_state(AddReview.client_name)
+    await message.answer("Имя клиента, ник или короткая пометка. Если не знаешь, напиши '-'")
+
+
+@router.message(AddReview.client_name)
+async def save_client_name(message: Message, state: FSMContext) -> None:
+    await state.update_data(client_name=message.text.strip())
+    await state.set_state(AddReview.proof)
+    await message.answer(
+        "Теперь отправь доказательство: фото/скрин отзыва или текст/ссылку. "
+        "Можно фото с подписью."
+    )
+
+
+@router.message(AddReview.proof)
+async def save_review(message: Message, state: FSMContext, bot: Bot) -> None:
+    data = await state.get_data()
+    attachment_file_id = message.photo[-1].file_id if message.photo else None
+    proof_text = message.caption or message.text or "Фото без подписи"
+    review_id = db.add_review(
+        manager_id=message.from_user.id,
+        platform=data["platform"],
+        client_name=data["client_name"],
+        review_text=f"Точка: {data['office']}\nДоказательство: {proof_text.strip()}",
+        attachment_file_id=attachment_file_id,
+        price=config.default_review_price,
+    )
+    await state.clear()
+
+    await message.answer(
+        f"Отзыв #{review_id} принят на проверку.\n"
+        f"Сумма после подтверждения: {config.default_review_price} руб."
+    )
+
+    admin_text = (
+        f"Новый отзыв #{review_id}\n"
+        f"Менеджер: {message.from_user.full_name} ({message.from_user.id})\n"
+        f"Точка: {data['office']}\n"
+        f"Платформа: {data['platform']}\n"
+        f"Клиент: {data['client_name']}\n"
+        f"Доказательство: {proof_text.strip()}\n\n"
+        f"Подтвердить: /approve_{review_id}\n"
+        f"Отклонить: /reject_{review_id}"
+    )
+    for admin_id in config.admin_ids:
+        if attachment_file_id:
+            await bot.send_photo(admin_id, attachment_file_id, caption=admin_text)
+        else:
+            await bot.send_message(admin_id, admin_text)
+
+
+@router.message(Command("kpi"))
+async def kpi(message: Message) -> None:
+    rows = db.get_stats(message.from_user.id)
+    if not rows:
+        await message.answer("Ты еще не привязан к городу. Нажми /start.")
+        return
+
+    row = rows[0]
+    await message.answer(
+        f"KPI по менеджеру: {row['name']}\n"
+        f"Город: {row['city']}\n"
+        f"Всего отправлено: {row['total_reviews']}\n"
+        f"На проверке: {row['pending_reviews']}\n"
+        f"Подтверждено: {row['approved_reviews']}\n"
+        f"Заработано: {row['earned']} руб."
+    )
+
+
+@router.message(Command("pending"))
+async def pending(message: Message) -> None:
+    if not is_admin(message):
+        await message.answer("Команда доступна только администратору.")
+        return
+
+    rows = db.list_pending_reviews()
+    if not rows:
+        await message.answer("Нет отзывов на проверке.")
+        return
+
+    text = "\n\n".join(
+        f"#{row['id']} | {row['name']} | {row['city']} | {row['platform']}\n"
+        f"{row['review_text']}\n"
+        f"/approve_{row['id']} или /reject_{row['id']}"
+        for row in rows
+    )
+    await message.answer(text)
+
+
+@router.message(Command("report"))
+async def report(message: Message) -> None:
+    if not is_admin(message):
+        await message.answer("Команда доступна только администратору.")
+        return
+
+    rows = db.get_stats()
+    if not rows:
+        await message.answer("Пока нет менеджеров.")
+        return
+
+    text = "Отчет по менеджерам:\n\n" + "\n".join(
+        f"{row['name']} | {row['city']} | "
+        f"подтв.: {row['approved_reviews']} | "
+        f"проверка: {row['pending_reviews']} | "
+        f"{row['earned']} руб."
+        for row in rows
+    )
+    await message.answer(text)
+
+
+@router.message(F.text.regexp(r"^/approve_\d+$"))
+async def approve(message: Message) -> None:
+    if not is_admin(message):
+        await message.answer("Команда доступна только администратору.")
+        return
+
+    review_id = int(message.text.rsplit("_", 1)[1])
+    if db.set_review_status(review_id, "approved"):
+        await message.answer(f"Отзыв #{review_id} подтвержден.")
+    else:
+        await message.answer(f"Отзыв #{review_id} не найден.")
+
+
+@router.message(F.text.regexp(r"^/reject_\d+$"))
+async def reject(message: Message) -> None:
+    if not is_admin(message):
+        await message.answer("Команда доступна только администратору.")
+        return
+
+    review_id = int(message.text.rsplit("_", 1)[1])
+    if db.set_review_status(review_id, "rejected"):
+        await message.answer(f"Отзыв #{review_id} отклонен.")
+    else:
+        await message.answer(f"Отзыв #{review_id} не найден.")
+
+
+async def main() -> None:
+    db.init()
+    bot = Bot(token=config.bot_token)
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.include_router(router)
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    asyncio.run(main())
